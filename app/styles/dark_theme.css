@@ -267,4 +267,77 @@
 .rec-icon   { font-size: 0.85rem; }
 .rec-action { font-size: 0.78rem; font-weight: 600; color: #F8FAFC; flex: 1; }
 .rec-risk   { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; }
-.rec-meta   { font-size: 0.65rem; color: #64748B; }
+.rec-meta   { font-size: 0.65rem; color: #64748B; margin-bottom: 6px; }
+
+/* ── Decision card: evidence / confidence / source ──────────────────────── */
+.conf-badge {
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 2px 7px;
+    border-radius: 8px;
+    white-space: nowrap;
+}
+
+.conf-high   { background: #14532d; color: #22C55E; }
+.conf-medium { background: #451a03; color: #F59E0B; }
+.conf-low    { background: #450a0a; color: #EF4444; }
+
+.rec-evidence {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin: 6px 0;
+    padding: 8px 10px;
+    background: #0F172A;
+    border-radius: 4px;
+    border-left: 2px solid #334155;
+}
+
+.rec-evidence-row {
+    display: flex;
+    gap: 6px;
+    font-size: 0.68rem;
+    line-height: 1.4;
+}
+
+.rec-evidence-label {
+    color: #94A3B8;
+    flex: 0 0 auto;
+    min-width: 110px;
+}
+
+.rec-evidence-value { color: #E2E8F0; }
+
+.rec-source {
+    font-size: 0.62rem;
+    color: #64748B;
+    font-style: italic;
+}
+
+/* ── Event timeline clustering ──────────────────────────────────────────── */
+.timeline-cluster { margin-bottom: 8px; }
+.timeline-cluster > summary {
+    list-style: none;
+    cursor: pointer;
+    margin-bottom: 0;
+}
+.timeline-cluster > summary::-webkit-details-marker { display: none; }
+
+.timeline-expand {
+    color: #3B82F6;
+    font-size: 0.65rem;
+    margin-left: 4px;
+}
+
+.timeline-cluster-items {
+    margin-top: 6px;
+    padding-left: 10px;
+    border-left: 2px dashed #334155;
+}
+
+.timeline-cluster-items .timeline-event {
+    margin-bottom: 6px;
+    opacity: 0.85;
+}

@@ -167,6 +167,54 @@ def test_event_timeline_none_driver_no_brackets(sample_events):
     assert "[None]" not in html
 
 
+@pytest.fixture
+def repeated_blue_flag_events():
+    """Race-control messages that only differ by car number and timestamp —
+    the exact shape FastF1 produces for repeated blue flags."""
+    return pd.DataFrame([
+        {"SessionTimeSeconds": t, "Severity": "Warning", "EventType": "Race Control",
+         "Driver": None, "Description": f"WAVED BLUE FLAG FOR CAR {car} TIMED AT {clock}", "Action": ""}
+        for t, car, clock in [
+            (100.0, "2 (SAR)", "18:21:59"),
+            (200.0, "2 (SAR)", "18:26:22"),
+            (300.0, "77 (BOT)", "18:59:32"),
+        ]
+    ])
+
+
+def test_event_timeline_clusters_repeated_events(repeated_blue_flag_events):
+    html = event_timeline_html(repeated_blue_flag_events)
+    assert "3× WAVED BLUE FLAG" in html
+    assert "timeline-cluster" in html
+    assert "expand" in html
+
+
+def test_event_timeline_cluster_preserves_individual_rows(repeated_blue_flag_events):
+    html = event_timeline_html(repeated_blue_flag_events)
+    # All three original timestamps are still present inside the expandable detail
+    assert "18:21:59" in html
+    assert "18:26:22" in html
+    assert "18:59:32" in html
+
+
+def test_event_timeline_does_not_cluster_distinct_events(sample_events):
+    """Three genuinely different events must render as three separate items, not a cluster."""
+    html = event_timeline_html(sample_events)
+    assert "timeline-cluster" not in html
+
+
+def test_event_timeline_cluster_respects_max_events(repeated_blue_flag_events):
+    """A 3-row cluster still counts as a single item against max_events."""
+    other = pd.DataFrame([{
+        "SessionTimeSeconds": 400.0, "Severity": "Info", "EventType": "Pit",
+        "Driver": "VER", "Description": "Pit stop", "Action": "",
+    }])
+    events = pd.concat([repeated_blue_flag_events, other], ignore_index=True)
+    html = event_timeline_html(events, max_events=2)
+    assert "3× WAVED BLUE FLAG" in html
+    assert "Pit stop" in html
+
+
 # ---------------------------------------------------------------------------
 # sparkline
 # ---------------------------------------------------------------------------

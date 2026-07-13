@@ -75,6 +75,19 @@ def test_unexplained_anomaly_gives_critical(two_driver_laps, empty_recommendatio
     assert lec_row.iloc[0]["HealthStatus"] == HEALTH_HEALTHY
 
 
+def test_unexplained_anomaly_with_no_recommendation_is_not_no_action_needed(two_driver_laps, empty_recommendations):
+    """A Critical driver escalated purely by an anomaly must not claim 'No action needed'."""
+    anomalies = pd.DataFrame({
+        "Driver": ["VER"],
+        "LapNumber": [3],
+        "HealthStatus": [HEALTH_UNEXPLAINED],
+    })
+    result = compute_fleet_health(two_driver_laps, anomalies, empty_recommendations)
+    ver_row = result[result["Driver"] == "VER"]
+    assert ver_row.iloc[0]["ActiveRecommendation"] != "No action needed"
+    assert "Investigate" in ver_row.iloc[0]["ActiveRecommendation"]
+
+
 def test_partially_explained_anomaly_gives_warning(two_driver_laps, empty_recommendations):
     anomalies = pd.DataFrame({
         "Driver": ["LEC"],
@@ -84,6 +97,18 @@ def test_partially_explained_anomaly_gives_warning(two_driver_laps, empty_recomm
     result = compute_fleet_health(two_driver_laps, anomalies, empty_recommendations)
     lec_row = result[result["Driver"] == "LEC"]
     assert lec_row.iloc[0]["HealthStatus"] == HEALTH_WARNING
+
+
+def test_partially_explained_anomaly_with_no_recommendation_is_not_no_action_needed(two_driver_laps, empty_recommendations):
+    anomalies = pd.DataFrame({
+        "Driver": ["LEC"],
+        "LapNumber": [2],
+        "HealthStatus": [HEALTH_PARTIALLY_EXPLAINED],
+    })
+    result = compute_fleet_health(two_driver_laps, anomalies, empty_recommendations)
+    lec_row = result[result["Driver"] == "LEC"]
+    assert lec_row.iloc[0]["ActiveRecommendation"] != "No action needed"
+    assert "Monitor" in lec_row.iloc[0]["ActiveRecommendation"]
 
 
 def test_explained_anomaly_does_not_degrade_health(two_driver_laps, empty_recommendations):
@@ -135,6 +160,12 @@ def test_high_risk_gives_warning_not_critical(two_driver_laps, empty_anomalies):
     result = compute_fleet_health(two_driver_laps, empty_anomalies, recs)
     ver_row = result[result["Driver"] == "VER"]
     assert ver_row.iloc[0]["HealthStatus"] == HEALTH_WARNING
+    # The stint's own recommendation text is "No action needed within the next
+    # 10 laps", but the driver is still Warning (High risk) — the fallback
+    # must not collapse to the bare "No action needed" the driver-level badge
+    # would contradict.
+    assert ver_row.iloc[0]["ActiveRecommendation"] != "No action needed"
+    assert "High degradation risk" in ver_row.iloc[0]["ActiveRecommendation"]
 
 
 def test_unexplained_beats_warning(two_driver_laps):

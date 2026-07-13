@@ -157,57 +157,99 @@ def _last_track_status(laps_df: pd.DataFrame) -> str:
     return TRACK_STATUS_LABELS.get(raw[-1] if raw else "", "Unknown")
 
 
-def _fleet_donut(kpis: dict) -> go.Figure:
-    labels = ["Healthy", "Warning", "Critical"]
-    values = [kpis["Healthy"], kpis["Warning"], kpis["Critical"]]
-    colors = ["#22C55E", "#F59E0B", "#EF4444"]
-    fig = go.Figure(go.Pie(
-        labels=labels, values=values, hole=0.65,
-        marker=dict(colors=colors, line=dict(color="#0F172A", width=2)),
-        textinfo="label+value",
-        textfont=dict(color="#F8FAFC", size=11),
+def _fleet_risk_distribution(risk_df: pd.DataFrame) -> go.Figure:
+    """Forward-looking degradation risk (Phase 5 tertiles) across every
+    current stint — distinct from the Healthy/Warning/Critical KPI banner,
+    which reflects *current* anomaly/recommendation state. This answers
+    "where is the fleet heading", not "what does it look like right now"."""
+    order = ["Low", "Medium", "High"]
+    colors = {"Low": "#22C55E", "Medium": "#F59E0B", "High": "#EF4444"}
+    if risk_df.empty:
+        counts = pd.Series([0, 0, 0], index=order)
+    else:
+        counts = risk_df["RiskCategory"].value_counts().reindex(order, fill_value=0)
+    fig = go.Figure(go.Bar(
+        x=counts.values, y=order, orientation="h",
+        marker=dict(color=[colors[c] for c in order]),
+        text=counts.values, textposition="outside",
+        textfont=dict(color="#F8FAFC"),
     ))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=0, r=30, t=10, b=20), height=220,
+        xaxis=dict(showgrid=False, color="#94A3B8", title="Stints"),
+        yaxis=dict(showgrid=False, color="#F8FAFC", autorange="reversed"),
         showlegend=False,
-        margin=dict(l=0, r=0, t=10, b=0), height=220,
-        annotations=[dict(
-            text=f"<b>{kpis['DriverCount']}</b><br>Assets",
-            x=0.5, y=0.5,
-            font=dict(size=16, color="#F8FAFC"),
-            showarrow=False,
-        )],
     )
     return fig
 
 
+def _augment_with_risk(health_df: pd.DataFrame, risk_df: pd.DataFrame) -> pd.DataFrame:
+    """Attach each driver's *current*-stint projected degradation increase
+    (Phase 5) onto the fleet health table, so ties in health severity break
+    on forward-looking risk instead of arbitrary row order."""
+    if risk_df.empty or health_df.empty:
+        return health_df.assign(ProjectedIncreaseSeconds=float("nan"))
+    lookup = risk_df.set_index(["Driver", "Stint"])["ProjectedIncreaseSeconds"]
+    values = [
+        lookup.get((row["Driver"], row["Stint"]), float("nan"))
+        for _, row in health_df.iterrows()
+    ]
+    return health_df.assign(ProjectedIncreaseSeconds=values)
+
+
 def _sort_by_health(health_df: pd.DataFrame) -> pd.DataFrame:
+    """Primary sort: health severity (Critical > Warning > Healthy).
+    Secondary sort (tiebreak): projected degradation risk, worst first —
+    only applied when `_augment_with_risk` has been called first."""
     order = {HEALTH_CRITICAL: 0, HEALTH_WARNING: 1, HEALTH_HEALTHY: 2}
-    return (
-        health_df
-        .assign(_order=health_df["HealthStatus"].map(order).fillna(3))
-        .sort_values("_order")
-        .drop(columns=["_order"])
-        .reset_index(drop=True)
-    )
+    df = health_df.assign(_order=health_df["HealthStatus"].map(order).fillna(3))
+    if "ProjectedIncreaseSeconds" in df.columns:
+        df = df.assign(_risk_sort=-df["ProjectedIncreaseSeconds"].fillna(float("-inf")))
+        return (
+            df.sort_values(["_order", "_risk_sort"])
+            .drop(columns=["_order", "_risk_sort"])
+            .reset_index(drop=True)
+        )
+    return df.sort_values("_order").drop(columns=["_order"]).reset_index(drop=True)
 
 
-def _driver_header_html(dhr: pd.Series) -> str:
+def _fmt_meta(val, suffix=""):
+    if val is None:
+        return "—"
+    try:
+        import math
+        if math.isnan(float(val)):
+            return "—"
+    except (TypeError, ValueError):
+        pass
+    return f"{int(float(val))}{suffix}" if suffix == " laps" else str(val)
+
+
+def _time_to_intervention(current_stint_rec: pd.DataFrame) -> str:
+    """Laps remaining until the Phase 7 degradation forecast crosses the pit
+    threshold for the driver's *current* stint — the real, existing proxy
+    for "remaining useful life" (no new RUL model)."""
+    if current_stint_rec.empty:
+        return "—"
+    row = current_stint_rec.iloc[0]
+    crossing = row.get("ProjectedCrossingStintLap")
+    current_lap = row.get("CurrentStintLap")
+    if crossing is None or pd.isna(crossing) or current_lap is None or pd.isna(current_lap):
+        action = str(row.get("RecommendedAction") or "")
+        return "Stable" if action.startswith("No action") else "—"
+    remaining = int(crossing) - int(current_lap)
+    return "Now" if remaining <= 0 else f"{remaining} laps"
+
+
+def _driver_header_html(dhr: pd.Series, current_stint_rec: pd.DataFrame | None = None) -> str:
     status = dhr.get("HealthStatus", HEALTH_HEALTHY)
     status_cls = {HEALTH_HEALTHY: "healthy", HEALTH_WARNING: "warning", HEALTH_CRITICAL: "critical"}.get(status, "healthy")
     badge = health_badge_html(status)
     driver = dhr.get("Driver", "—")
-
-    def _fmt(val, suffix=""):
-        if val is None:
-            return "—"
-        try:
-            import math
-            if math.isnan(float(val)):
-                return "—"
-        except (TypeError, ValueError):
-            pass
-        return f"{int(float(val))}{suffix}" if suffix == " laps" else str(val)
+    time_to_intervention = _time_to_intervention(
+        current_stint_rec if current_stint_rec is not None else pd.DataFrame()
+    )
 
     return f"""<div class="driver-header {status_cls}">
   <div>
@@ -221,48 +263,161 @@ def _driver_header_html(dhr: pd.Series) -> str:
     </div>
     <div class="driver-meta-item">
       <span class="driver-meta-item-label">Age</span>
-      <span class="driver-meta-item-value">{_fmt(dhr.get("TyreLife"), " laps")}</span>
+      <span class="driver-meta-item-value">{_fmt_meta(dhr.get("TyreLife"), " laps")}</span>
     </div>
     <div class="driver-meta-item">
       <span class="driver-meta-item-label">Lap</span>
-      <span class="driver-meta-item-value">{_fmt(dhr.get("CurrentLap"))}</span>
+      <span class="driver-meta-item-value">{_fmt_meta(dhr.get("CurrentLap"))}</span>
     </div>
     <div class="driver-meta-item">
       <span class="driver-meta-item-label">Stint</span>
-      <span class="driver-meta-item-value">{_fmt(dhr.get("Stint"))}</span>
+      <span class="driver-meta-item-value">{_fmt_meta(dhr.get("Stint"))}</span>
     </div>
     <div class="driver-meta-item">
       <span class="driver-meta-item-label">Risk</span>
       <span class="driver-meta-item-value">{dhr.get("RiskCategory") or "—"}</span>
     </div>
+    <div class="driver-meta-item">
+      <span class="driver-meta-item-label">Time to Intervention</span>
+      <span class="driver-meta-item-value">{time_to_intervention}</span>
+    </div>
   </div>
 </div>"""
 
 
-def _recommendations_html(recs_df: pd.DataFrame) -> str:
-    _RISK_COLOR = {"High": "#EF4444", "Medium": "#F59E0B", "Low": "#22C55E"}
-    _REC_ICON = {"Pit now": "🔴", "Pit within": "🟠", "No action": "🟢"}
-    cards = []
-    for _, row in recs_df.iterrows():
-        risk = row.get("RiskCategory") or "—"
-        action = row.get("RecommendedAction") or "—"
-        compound = row.get("Compound") or "—"
-        stint = row.get("Stint")
-        stint_str = str(int(stint)) if stint is not None and not pd.isna(stint) else "—"
-        slope = row.get("DegradationSecondsPerLap")
-        slope_str = f"{slope:+.4f} s/lap" if slope is not None and not pd.isna(slope) else "—"
-        risk_color = _RISK_COLOR.get(risk, "#94A3B8")
-        icon = next((v for k, v in _REC_ICON.items() if k in str(action)), "ℹ️")
-        cards.append(
-            f'<div class="rec-card">'
-            f'<div class="rec-header">'
-            f'<span class="rec-icon">{icon}</span>'
-            f'<span class="rec-action">{action}</span>'
-            f'<span class="rec-risk" style="color:{risk_color}">{risk} Risk</span>'
-            f'</div>'
-            f'<div class="rec-meta">Stint {stint_str} · {compound} · Slope: {slope_str}</div>'
-            f"</div>"
+_RISK_COLOR = {"High": "#EF4444", "Medium": "#F59E0B", "Low": "#22C55E"}
+_REC_ICON = {"Pit now": "🔴", "Pit within": "🟠", "Monitor": "🟠", "No action": "🟢"}
+_CONFIDENCE_CLASS = {"High": "conf-high", "Medium": "conf-medium", "Low": "conf-low"}
+
+
+def _confidence_badge_html(confidence: str | None) -> str:
+    if not confidence:
+        return ""
+    cls = _CONFIDENCE_CLASS.get(confidence, "conf-medium")
+    return f'<span class="conf-badge {cls}">Confidence: {confidence}</span>'
+
+
+def _last_anomaly_for(anomalies_df: pd.DataFrame, driver: str) -> pd.Series | None:
+    driver_anomalies = anomalies_df[anomalies_df["Driver"] == driver] if not anomalies_df.empty else anomalies_df
+    if driver_anomalies.empty:
+        return None
+    return driver_anomalies.sort_values("LapNumber").iloc[-1]
+
+
+def _evidence_row_html(label: str, value: str) -> str:
+    return (
+        f'<div class="rec-evidence-row">'
+        f'<span class="rec-evidence-label">{label}</span>'
+        f'<span class="rec-evidence-value">{value}</span>'
+        f'</div>'
+    )
+
+
+def _decision_card_html(row: pd.Series, fits_df: pd.DataFrame, last_anomaly: pd.Series | None) -> str:
+    """One stint's recommendation as a full decision card: action, evidence,
+    remaining useful life, confidence, root cause, and source phase — never
+    just a bare action label. Every field is read from data already computed
+    by Phase 5/7/10 (`degradation_per_stint`, `build_recommendations_table`,
+    `assess_anomaly_health`); nothing here is a new calculation."""
+    risk = row.get("RiskCategory") or "—"
+    action = row.get("RecommendedAction") or "—"
+    compound = row.get("Compound") or "—"
+    stint = row.get("Stint")
+    stint_str = str(int(stint)) if stint is not None and not pd.isna(stint) else "—"
+    slope = row.get("DegradationSecondsPerLap")
+    slope_str = f"{slope:+.4f} s/lap" if slope is not None and not pd.isna(slope) else "—"
+
+    # RiskCategory (Phase 5, relative to this race's other stints) and
+    # RecommendedAction (Phase 7, an absolute threshold) can legitimately
+    # disagree — a stint can rank High risk while still being "No action
+    # needed" against the fixed pit threshold. Displaying the bare Phase 7
+    # text alone would look identical to a genuinely healthy stint, so a
+    # High/Medium risk stint always states that disagreement explicitly
+    # instead of just showing "No action needed" (mirrors the same fix in
+    # `fleet_health.compute_fleet_health`).
+    if action.startswith("No action") and risk in ("High", "Medium"):
+        action = f"Monitor — {risk} degradation risk (below Phase 7 pit threshold)"
+
+    fit_row = fits_df[fits_df["Stint"] == stint] if stint is not None and not fits_df.empty else pd.DataFrame()
+    start_pace = float(fit_row["StartingLapTimeEstimate"].iloc[0]) if not fit_row.empty else None
+    start_pace_str = f"{start_pace:.3f}s" if start_pace is not None else "unknown"
+    evidence_str = f"Degradation {slope_str} from a {start_pace_str} stint-start baseline"
+
+    rul_str = _time_to_intervention(pd.DataFrame([row]))
+    if rul_str == "—":
+        rul_str = f"Beyond the {config.DECISION_MAX_HORIZON_LAPS}-lap forecast horizon"
+    elif rul_str == "Now":
+        rul_str = "Threshold already crossed"
+    elif rul_str != "Stable":
+        rul_str = f"{rul_str} until pit threshold (stint lap {int(row.get('ProjectedCrossingStintLap'))})"
+
+    risk_color = _RISK_COLOR.get(risk, "#94A3B8")
+    icon = next((v for k, v in _REC_ICON.items() if k in str(action)), "ℹ️")
+
+    if last_anomaly is not None:
+        confidence = last_anomaly.get("Confidence")
+        anomaly_status = last_anomaly.get("HealthStatus", "—")
+        anomaly_lap = last_anomaly.get("LapNumber")
+        anomaly_lap_str = str(int(anomaly_lap)) if anomaly_lap is not None and not pd.isna(anomaly_lap) else "—"
+        explanation = last_anomaly.get("Explanation") or "No contextual explanation available."
+        evidence_rows = (
+            _evidence_row_html("Last anomaly", f"Lap {anomaly_lap_str} — {anomaly_status}")
+            + _evidence_row_html("Root cause", explanation)
         )
+        confidence_html = _confidence_badge_html(confidence)
+        source = "Phase 5 (forecast) → Phase 7 (threshold) · Phase 10 (context)"
+    else:
+        evidence_rows = ""
+        confidence_html = ""
+        source = "Phase 5 (forecast) → Phase 7 (threshold)"
+
+    return f"""<div class="rec-card">
+  <div class="rec-header">
+    <span class="rec-icon">{icon}</span>
+    <span class="rec-action">{action}</span>
+    <span class="rec-risk" style="color:{risk_color}">{risk} Risk</span>
+    {confidence_html}
+  </div>
+  <div class="rec-meta">Stint {stint_str} · {compound}</div>
+  <div class="rec-evidence">
+    {_evidence_row_html("Evidence", evidence_str)}
+    {_evidence_row_html("Remaining useful life", rul_str)}
+    {evidence_rows}
+  </div>
+  <div class="rec-source">Source: {source}</div>
+</div>"""
+
+
+def _anomaly_only_card_html(dhr: pd.Series, last_anomaly: pd.Series) -> str:
+    """Fallback decision card for a Warning/Critical driver whose escalation
+    came from an anomaly with no fitted degradation stint (so there is no
+    Phase 7 recommendation row at all) — still explains itself instead of
+    falling through to a bare 'No recommendations available' message."""
+    status = last_anomaly.get("HealthStatus", "—")
+    confidence = last_anomaly.get("Confidence")
+    anomaly_lap = last_anomaly.get("LapNumber")
+    anomaly_lap_str = str(int(anomaly_lap)) if anomaly_lap is not None and not pd.isna(anomaly_lap) else "—"
+    explanation = last_anomaly.get("Explanation") or "No contextual explanation available."
+    action = dhr.get("ActiveRecommendation") or "Investigate — unexplained anomaly"
+    icon = "🔴" if "Investigate" in action else "🟠"
+
+    return f"""<div class="rec-card">
+  <div class="rec-header">
+    <span class="rec-icon">{icon}</span>
+    <span class="rec-action">{action}</span>
+    {_confidence_badge_html(confidence)}
+  </div>
+  <div class="rec-evidence">
+    {_evidence_row_html("Last anomaly", f"Lap {anomaly_lap_str} — {status}")}
+    {_evidence_row_html("Root cause", explanation)}
+  </div>
+  <div class="rec-source">Source: Phase 10 (context-aware health assessment)</div>
+</div>"""
+
+
+def _recommendations_html(recs_df: pd.DataFrame, fits_df: pd.DataFrame, anomalies_df: pd.DataFrame, driver: str) -> str:
+    last_anomaly = _last_anomaly_for(anomalies_df, driver)
+    cards = [_decision_card_html(row, fits_df, last_anomaly) for _, row in recs_df.iterrows()]
     return '<div class="rec-list">' + "".join(cards) + "</div>"
 
 
@@ -304,22 +459,42 @@ with overview_tab:
         ov_context = align_context_to_session(load_context())
         ov_anomalies = assess_anomaly_health(ov_laps, ov_context)
         ov_recs = build_recommendations_table(ov_laps)
-        ov_health = compute_fleet_health(ov_laps, ov_anomalies, ov_recs)
+        ov_risk = degradation_risk_scores(ov_laps)
+        ov_health = _augment_with_risk(compute_fleet_health(ov_laps, ov_anomalies, ov_recs), ov_risk)
         ov_kpis = fleet_kpis(ov_health, ov_laps)
+        ov_health_summary = health_summary(ov_anomalies)
         ov_event_log = build_event_log(ov_laps, ov_context, ov_anomalies, ov_recs)
         ov_track_status = _last_track_status(ov_laps)
 
         # --- Row 1: Status banner -------------------------------------------
         st.markdown(status_banner_html(ov_kpis, ov_track_status), unsafe_allow_html=True)
 
-        # --- Row 2: Fleet donut + top-risk assets ---------------------------
-        col_donut, col_top = st.columns([1, 2])
-        with col_donut:
-            st.markdown('<p class="section-heading">Fleet Health Distribution</p>', unsafe_allow_html=True)
-            st.plotly_chart(_fleet_donut(ov_kpis), use_container_width=True)
+        # --- Row 1b: Executive KPIs ------------------------------------------
+        ov_health_ranked = _sort_by_health(ov_health)
+        highest_risk_driver = ov_health_ranked.iloc[0]["Driver"] if not ov_health_ranked.empty else "—"
+        interventions_due = int(ov_recs["RecommendedAction"].str.startswith("Pit").sum()) if not ov_recs.empty else 0
+        avg_degradation = ov_risk["DegradationSecondsPerLap"].mean() if not ov_risk.empty else None
+        confidence_pct = (
+            100.0 if ov_health_summary["TotalFlagged"] == 0 else ov_health_summary["NoiseReductionPct"]
+        )
+        x1, x2, x3, x4 = st.columns(4)
+        x1.metric("Highest Risk Asset", highest_risk_driver,
+                   help="Top of the health-severity ranking, tie-broken by projected degradation risk (Phase 5).")
+        x2.metric("Interventions Due", interventions_due,
+                   help="Stints with an active 'Pit now' / 'Pit within N laps' recommendation (Phase 7).")
+        x3.metric("Avg Degradation Rate", f"{avg_degradation:+.4f} s/lap" if avg_degradation is not None else "—",
+                   help="Mean projected lap-time degradation slope across all current stints (Phase 5).")
+        x4.metric("Operational Confidence", f"{confidence_pct:.0f}%",
+                   help="Share of flagged anomalies fully explained by operational context (Phase 10).")
+
+        # --- Row 2: Fleet risk distribution + top-risk assets ----------------
+        col_risk, col_top = st.columns([1, 2])
+        with col_risk:
+            st.markdown('<p class="section-heading">Fleet Risk Distribution</p>', unsafe_allow_html=True)
+            st.plotly_chart(_fleet_risk_distribution(ov_risk), use_container_width=True)
         with col_top:
             st.markdown('<p class="section-heading">Highest Risk Assets</p>', unsafe_allow_html=True)
-            top5 = _sort_by_health(ov_health).head(5)
+            top5 = ov_health_ranked.head(5)
             st.markdown(
                 '<div class="asset-grid">'
                 + "".join(asset_card_html(row) for _, row in top5.iterrows())
@@ -329,22 +504,52 @@ with overview_tab:
 
         # --- Row 3: Recent event timeline -----------------------------------
         st.markdown('<p class="section-heading">Recent Events</p>', unsafe_allow_html=True)
-        recent_events = ov_event_log.sort_values("SessionTimeSeconds", ascending=False).head(15)
+        recent_events = ov_event_log.sort_values("SessionTimeSeconds", ascending=False)
         st.markdown(event_timeline_html(recent_events), unsafe_allow_html=True)
 
-        # --- Row 4: All assets grid -----------------------------------------
+        # --- Row 4: All assets grid -------------------------------------------
         st.markdown('<p class="section-heading">All Assets</p>', unsafe_allow_html=True)
         st.caption(
             "Health status derived from anomaly assessment (Phase 10) and pit recommendations "
             "(Phase 7). No new models — all inputs come from existing analytics."
         )
-        sorted_health = _sort_by_health(ov_health)
-        st.markdown(
-            '<div class="asset-grid">'
-            + "".join(asset_card_html(row) for _, row in sorted_health.iterrows())
-            + "</div>",
-            unsafe_allow_html=True,
-        )
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            sort_by = st.selectbox(
+                "Sort by", ["Health status", "Projected risk", "Tyre age", "Driver"], key="overview_sort",
+            )
+        with f2:
+            status_filter = st.multiselect(
+                "Filter: health status", [HEALTH_CRITICAL, HEALTH_WARNING, HEALTH_HEALTHY],
+                default=[HEALTH_CRITICAL, HEALTH_WARNING, HEALTH_HEALTHY], key="overview_status_filter",
+            )
+        with f3:
+            compound_options = sorted(c for c in ov_health["CurrentCompound"].dropna().unique() if c)
+            compound_filter = st.multiselect(
+                "Filter: tyre compound", compound_options, default=compound_options, key="overview_compound_filter",
+            )
+
+        filtered_health = ov_health[
+            ov_health["HealthStatus"].isin(status_filter) & ov_health["CurrentCompound"].isin(compound_filter)
+        ]
+        if sort_by == "Health status":
+            sorted_health = _sort_by_health(filtered_health)
+        elif sort_by == "Projected risk":
+            sorted_health = filtered_health.sort_values("ProjectedIncreaseSeconds", ascending=False, na_position="last")
+        elif sort_by == "Tyre age":
+            sorted_health = filtered_health.sort_values("TyreLife", ascending=False, na_position="last")
+        else:
+            sorted_health = filtered_health.sort_values("Driver")
+
+        if sorted_health.empty:
+            st.info("No assets match the selected filters.")
+        else:
+            st.markdown(
+                '<div class="asset-grid">'
+                + "".join(asset_card_html(row) for _, row in sorted_health.iterrows())
+                + "</div>",
+                unsafe_allow_html=True,
+            )
 
         # --- Driver selector → Driver Detail --------------------------------
         st.divider()
@@ -418,13 +623,20 @@ with driver_tab:
             st.warning(f"No health data for {selected_driver}.")
         else:
             dhr = driver_health_rows.iloc[0]
+            driver_laps = dd_laps[dd_laps["Driver"] == selected_driver].copy()
+            fits = degradation_per_stint(driver_laps)
+            current_stint = dhr["Stint"]
+            current_fit = fits[fits["Stint"] == current_stint] if not fits.empty and current_stint is not None else pd.DataFrame()
+            current_stint_rec = (
+                dd_recs[(dd_recs["Driver"] == selected_driver) & (dd_recs["Stint"] == current_stint)]
+                if not dd_recs.empty else pd.DataFrame()
+            )
 
             # --- Driver header card -----------------------------------------
-            st.markdown(_driver_header_html(dhr), unsafe_allow_html=True)
+            st.markdown(_driver_header_html(dhr, current_stint_rec), unsafe_allow_html=True)
 
             # --- Expected vs Actual ----------------------------------------
             st.markdown('<p class="section-heading">Expected vs Actual</p>', unsafe_allow_html=True)
-            driver_laps = dd_laps[dd_laps["Driver"] == selected_driver].copy()
             avg_df = average_lap_time_by_driver(dd_laps)
             avg_row = avg_df[avg_df["Driver"] == selected_driver]
             expected_avg = float(avg_row["AvgLapTimeSeconds"].iloc[0]) if not avg_row.empty else None
@@ -432,9 +644,6 @@ with driver_tab:
             last_lap_rows = driver_laps.sort_values("LapNumber")
             actual_last = float(last_lap_rows.iloc[-1]["LapTimeSeconds"]) if not last_lap_rows.empty else None
 
-            fits = degradation_per_stint(driver_laps)
-            current_stint = dhr["Stint"]
-            current_fit = fits[fits["Stint"] == current_stint] if not fits.empty and current_stint is not None else pd.DataFrame()
             expected_slope = float(current_fit["DegradationSecondsPerLap"].iloc[0]) if not current_fit.empty else None
 
             e1, e2, e3 = st.columns(3)
@@ -478,17 +687,23 @@ with driver_tab:
             with chart_col2:
                 st.plotly_chart(plot_tyre_life_vs_laptime(driver_laps), use_container_width=True)
 
-            # --- Pit recommendations ----------------------------------------
-            st.markdown('<p class="section-heading">Pit / Maintenance Recommendations</p>',
-                        unsafe_allow_html=True)
-            if not dd_recs.empty:
-                driver_recs = dd_recs[dd_recs["Driver"] == selected_driver]
-                if driver_recs.empty:
-                    st.info(f"No recommendations available for {selected_driver}.")
-                else:
-                    st.markdown(_recommendations_html(driver_recs), unsafe_allow_html=True)
+            # --- Decision cards -----------------------------------------------
+            st.markdown('<p class="section-heading">Decision Support</p>', unsafe_allow_html=True)
+            driver_recs = dd_recs[dd_recs["Driver"] == selected_driver] if not dd_recs.empty else pd.DataFrame()
+            driver_last_anomaly = _last_anomaly_for(dd_anomalies, selected_driver)
+
+            if not driver_recs.empty:
+                st.markdown(
+                    _recommendations_html(driver_recs, fits, dd_anomalies, selected_driver),
+                    unsafe_allow_html=True,
+                )
+            elif dhr["HealthStatus"] != HEALTH_HEALTHY and driver_last_anomaly is not None:
+                # No fitted degradation stint exists, but the driver is still
+                # Warning/Critical from an anomaly — explain that instead of
+                # silently falling through to "no recommendations".
+                st.markdown(_anomaly_only_card_html(dhr, driver_last_anomaly), unsafe_allow_html=True)
             else:
-                st.info("No recommendations data available.")
+                st.success(f"No active recommendations for {selected_driver} — stable pace, no anomalies.")
 
             # --- Driver event timeline --------------------------------------
             st.markdown('<p class="section-heading">Driver Events</p>', unsafe_allow_html=True)

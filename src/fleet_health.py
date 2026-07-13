@@ -26,6 +26,14 @@ HEALTH_HEALTHY = "Healthy"
 HEALTH_WARNING = "Warning"
 HEALTH_CRITICAL = "Critical"
 
+# Fallback text when a driver is Warning/Critical but no pit recommendation
+# exists for the current stint — avoids the internally-inconsistent state of
+# a Warning/Critical badge paired with "No action needed".
+_ANOMALY_FALLBACK_ACTION = {
+    HEALTH_UNEXPLAINED: "Investigate — unexplained anomaly detected",
+    HEALTH_PARTIALLY_EXPLAINED: "Monitor — partially explained anomaly",
+}
+
 # Deterministic severity ordering – higher index wins
 _SEVERITY_ORDER = {HEALTH_HEALTHY: 0, HEALTH_WARNING: 1, HEALTH_CRITICAL: 2}
 
@@ -118,6 +126,12 @@ def compute_fleet_health(
             stint = latest.get("Stint")
         else:
             compound, tyre_life, current_lap, stint = "Unknown", None, None, None
+
+        if active_recommendation is None and status != HEALTH_HEALTHY:
+            if worst_anomaly in _ANOMALY_FALLBACK_ACTION:
+                active_recommendation = _ANOMALY_FALLBACK_ACTION[worst_anomaly]
+            elif risk_category in ("High", "Medium"):
+                active_recommendation = f"Monitor — {risk_category} degradation risk"
 
         records.append({
             "Driver": driver,
