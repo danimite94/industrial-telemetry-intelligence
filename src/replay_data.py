@@ -182,3 +182,67 @@ def multi_lap_duration_seconds(lap_dfs: dict[str, pd.DataFrame]) -> float:
     shared replay clock loops, rather than the replay resetting early.
     """
     return max(lap_duration_seconds(lap_df) for lap_df in lap_dfs.values())
+
+
+def trace_progress_points(
+    lap_df: pd.DataFrame,
+    value_col: str,
+    elapsed_seconds: float,
+    duration_seconds: float,
+    value_max: float,
+    panel_width: float,
+    panel_height: float,
+    x_margin: float = 10.0,
+    y_margin: float = 10.0,
+) -> list[tuple[float, float]]:
+    """Screen-space points for the portion of `value_col` sampled from lap
+    start up to `elapsed_seconds` - an "oscilloscope sweep" that grows one
+    point at a time as a replay plays, filling the panel by the time
+    `elapsed_seconds` reaches `duration_seconds` and holding there after.
+    """
+    if duration_seconds <= 0:
+        return []
+    clamped = min(max(elapsed_seconds, 0.0), duration_seconds)
+    visible = lap_df[lap_df["ElapsedSeconds"] <= clamped]
+    if visible.empty:
+        return []
+    usable_width = max(panel_width - 2 * x_margin, 1.0)
+    usable_height = max(panel_height - 2 * y_margin, 1.0)
+    points = []
+    for t, value in zip(visible["ElapsedSeconds"], visible[value_col]):
+        x = x_margin + (t / duration_seconds) * usable_width
+        fraction = min(max(value / value_max, 0.0), 1.0) if value_max else 0.0
+        y = y_margin + fraction * usable_height
+        points.append((x, y))
+    return points
+
+
+def trace_marker_xs(
+    lap_df: pd.DataFrame,
+    marker_col: str,
+    elapsed_seconds: float,
+    duration_seconds: float,
+    panel_width: float,
+    x_margin: float = 10.0,
+) -> list[float]:
+    """Screen x-positions where a boolean column (e.g. Brake) is true, within
+    the same visible-so-far window as `trace_progress_points`."""
+    if duration_seconds <= 0:
+        return []
+    clamped = min(max(elapsed_seconds, 0.0), duration_seconds)
+    visible = lap_df[(lap_df["ElapsedSeconds"] <= clamped) & lap_df[marker_col].astype(bool)]
+    if visible.empty:
+        return []
+    usable_width = max(panel_width - 2 * x_margin, 1.0)
+    return [x_margin + (t / duration_seconds) * usable_width for t in visible["ElapsedSeconds"]]
+
+
+def next_playback_speed(current: float, speeds: tuple[float, ...] = (1.0, 2.0, 4.0)) -> float:
+    """Cycle to the next fast-forward multiplier, wrapping back to the first
+    after the last. Falls back to the first step if `current` isn't one of
+    the configured steps (defensive - shouldn't happen in practice)."""
+    try:
+        idx = speeds.index(current)
+    except ValueError:
+        return speeds[0]
+    return speeds[(idx + 1) % len(speeds)]

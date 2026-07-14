@@ -11,7 +11,10 @@ from src.replay_data import (
     load_multi_driver_lap_telemetry,
     multi_lap_duration_seconds,
     multi_track_bounds,
+    next_playback_speed,
     scale_to_screen,
+    trace_marker_xs,
+    trace_progress_points,
     track_bounds,
 )
 
@@ -156,3 +159,68 @@ def test_multi_lap_duration_seconds_is_the_longest_driver(sample_telemetry_df):
     laps = load_multi_driver_lap_telemetry(sample_telemetry_df, ["VER", "LEC"])
     # VER's lap spans 2.0s; LEC's single-sample lap has zero duration.
     assert multi_lap_duration_seconds(laps) == pytest.approx(2.0)
+
+
+def test_trace_progress_points_grows_as_elapsed_advances(sample_telemetry_df):
+    lap = load_driver_lap_telemetry(sample_telemetry_df, "VER")  # 3 samples, t=0,1,2
+    # Negative elapsed clamps to 0 - the replay clock never actually goes
+    # negative, and t=0's own sample is immediately visible at the sweep start.
+    at_start = trace_progress_points(lap, "Speed", -1.0, 2.0, 300.0, 200.0, 100.0)
+    one_point = trace_progress_points(lap, "Speed", 0.0, 2.0, 300.0, 200.0, 100.0)
+    two_points = trace_progress_points(lap, "Speed", 1.0, 2.0, 300.0, 200.0, 100.0)
+    full = trace_progress_points(lap, "Speed", 2.0, 2.0, 300.0, 200.0, 100.0)
+
+    assert len(at_start) == 1
+    assert len(one_point) == 1
+    assert len(two_points) == 2
+    assert len(full) == 3
+
+
+def test_trace_progress_points_x_is_monotonic_and_within_margins(sample_telemetry_df):
+    lap = load_driver_lap_telemetry(sample_telemetry_df, "VER")
+    points = trace_progress_points(lap, "Speed", 2.0, 2.0, 300.0, 200.0, 100.0, x_margin=10.0, y_margin=10.0)
+
+    xs = [x for x, _ in points]
+    assert xs == sorted(xs)
+    assert all(10.0 - 1e-9 <= x <= 190.0 + 1e-9 for x in xs)
+    assert all(10.0 - 1e-9 <= y <= 90.0 + 1e-9 for _, y in points)
+
+
+def test_trace_progress_points_clamps_past_duration(sample_telemetry_df):
+    lap = load_driver_lap_telemetry(sample_telemetry_df, "VER")
+    at_duration = trace_progress_points(lap, "Speed", 2.0, 2.0, 300.0, 200.0, 100.0)
+    past_duration = trace_progress_points(lap, "Speed", 999.0, 2.0, 300.0, 200.0, 100.0)
+    assert at_duration == past_duration
+
+
+def test_trace_progress_points_zero_duration_is_empty(sample_telemetry_df):
+    lap = load_driver_lap_telemetry(sample_telemetry_df, "LEC")  # single sample, zero duration
+    assert trace_progress_points(lap, "Speed", 0.0, 0.0, 300.0, 200.0, 100.0) == []
+
+
+def test_trace_marker_xs_only_true_rows_within_visible_window(sample_telemetry_df):
+    lap = load_driver_lap_telemetry(sample_telemetry_df, "VER")  # Brake True only at t=2.0
+    before_brake = trace_marker_xs(lap, "Brake", 1.0, 2.0, 200.0)
+    at_brake = trace_marker_xs(lap, "Brake", 2.0, 2.0, 200.0)
+
+    assert before_brake == []
+    assert len(at_brake) == 1
+    assert 10.0 <= at_brake[0] <= 190.0
+
+
+def test_trace_marker_xs_zero_duration_is_empty(sample_telemetry_df):
+    lap = load_driver_lap_telemetry(sample_telemetry_df, "LEC")
+    assert trace_marker_xs(lap, "Brake", 0.0, 0.0, 200.0) == []
+
+
+def test_next_playback_speed_cycles_through_steps():
+    assert next_playback_speed(1.0, speeds=(1.0, 2.0, 4.0)) == 2.0
+    assert next_playback_speed(2.0, speeds=(1.0, 2.0, 4.0)) == 4.0
+
+
+def test_next_playback_speed_wraps_to_first():
+    assert next_playback_speed(4.0, speeds=(1.0, 2.0, 4.0)) == 1.0
+
+
+def test_next_playback_speed_falls_back_for_unknown_current():
+    assert next_playback_speed(3.0, speeds=(1.0, 2.0, 4.0)) == 1.0
