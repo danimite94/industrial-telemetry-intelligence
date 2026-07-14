@@ -62,30 +62,43 @@ GAUGE_RADIUS = 75
 BRAKE_LAMP_RADIUS = 40
 GEAR_BOX_HALF_SIZE = 40
 
+# ── Industrial control-room theme (matches app/styles/dark_theme.css) ───────
+INK_950 = (10, 12, 15)
+SURFACE_1 = (18, 21, 27)
+SURFACE_3 = (29, 34, 43)
+BORDER_STRONG = (58, 65, 78)
+TEXT_PRIMARY = (241, 244, 248)
+TEXT_SECONDARY = (152, 164, 181)
+ACCENT = (45, 212, 200)
+CRITICAL = (240, 71, 60)
+
 # Distinct colours cycled across drivers; the focus driver (gauge panel) is
 # always the first one passed on the command line. 20 entries covers the
-# full grid without repeating a colour.
+# full grid without repeating a colour. Generated in OKLCH (fixed lightness
+# band + gamut-safe chroma per hue, dataviz-skill method) so every entry
+# stays readable on the ink-black track view; each car is also always
+# labelled with its driver code, so identity never depends on colour alone.
 CAR_COLORS = [
-    arcade.color.RED,
-    arcade.color.YELLOW,
-    arcade.color.CYAN,
-    arcade.color.LIME_GREEN,
-    arcade.color.ORANGE,
-    arcade.color.VIOLET,
-    arcade.color.WHITE,
-    arcade.color.PINK,
-    arcade.color.SKY_BLUE,
-    arcade.color.GOLD,
-    arcade.color.SPRING_GREEN,
-    arcade.color.SALMON,
-    arcade.color.LAVENDER,
-    arcade.color.KHAKI,
-    arcade.color.TURQUOISE,
-    arcade.color.CORAL,
-    arcade.color.SILVER,
-    arcade.color.YELLOW_GREEN,
-    arcade.color.LIGHT_SALMON,
-    arcade.color.PALE_GOLDENROD,
+    (204, 33, 111),
+    (240, 40, 79),
+    (198, 64, 25),
+    (198, 106, 31),
+    (162, 101, 0),
+    (165, 129, 0),
+    (125, 121, 0),
+    (112, 149, 32),
+    (30, 140, 40),
+    (25, 158, 110),
+    (0, 140, 119),
+    (0, 157, 162),
+    (0, 134, 165),
+    (0, 145, 200),
+    (27, 118, 203),
+    (92, 121, 246),
+    (118, 74, 244),
+    (171, 77, 246),
+    (180, 34, 194),
+    (223, 39, 174),
 ]
 
 LEGEND_TOP_Y = TRACK_AREA_HEIGHT - 20  # just below the divider, inside the track view
@@ -98,7 +111,7 @@ class ReplayWindow(arcade.Window):
     def __init__(self, lap_dfs: dict, drivers: list[str], laps_df=None):
         title = "Industrial Telemetry Replay - " + ", ".join(drivers)
         super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, title)
-        arcade.set_background_color(arcade.color.DARK_SLATE_GRAY)
+        arcade.set_background_color(INK_950)
         self.lap_dfs = lap_dfs
         self.drivers = drivers
         self.focus_driver = drivers[0]
@@ -154,11 +167,11 @@ class ReplayWindow(arcade.Window):
         self._draw_gauge_panel(frames[self.focus_driver])
 
     def _draw_track(self, frames: dict):
-        arcade.draw_line_strip(self.left_edge, arcade.color.LIGHT_GRAY, 3)
-        arcade.draw_line_strip(self.right_edge, arcade.color.LIGHT_GRAY, 3)
+        arcade.draw_line_strip(self.left_edge, BORDER_STRONG, 3)
+        arcade.draw_line_strip(self.right_edge, BORDER_STRONG, 3)
 
         for (sx, sy), (ex, ey), is_black in self.start_finish_segments:
-            color = arcade.color.BLACK if is_black else arcade.color.WHITE
+            color = INK_950 if is_black else TEXT_PRIMARY
             arcade.draw_line(sx, sy, ex, ey, color, line_width=6)
 
         for driver, frame in frames.items():
@@ -177,17 +190,17 @@ class ReplayWindow(arcade.Window):
             y = LEGEND_TOP_Y - row * LEGEND_ROW_HEIGHT
             arcade.draw_circle_filled(x, y, 6, self.colors[driver])
             suffix = " (gauges)" if driver == self.focus_driver else ""
-            arcade.draw_text(f"{driver}{suffix}", x + 14, y - 7, arcade.color.WHITE, 12)
+            arcade.draw_text(f"{driver}{suffix}", x + 14, y - 7, TEXT_PRIMARY, 12)
 
     def _draw_gauge_panel(self, frame: dict):
         arcade.draw_lrbt_rectangle_filled(
-            0, SCREEN_WIDTH, TRACK_AREA_HEIGHT, SCREEN_HEIGHT, (30, 30, 30)
+            0, SCREEN_WIDTH, TRACK_AREA_HEIGHT, SCREEN_HEIGHT, SURFACE_1
         )
-        arcade.draw_line(0, TRACK_AREA_HEIGHT, SCREEN_WIDTH, TRACK_AREA_HEIGHT, arcade.color.WHITE, 2)
+        arcade.draw_line(0, TRACK_AREA_HEIGHT, SCREEN_WIDTH, TRACK_AREA_HEIGHT, ACCENT, 2)
 
         title = f"Focus: {self.focus_driver}   Lap time: {self.elapsed:5.1f}s / {self.duration:5.1f}s"
         arcade.draw_text(
-            title, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 30, arcade.color.WHITE, 16,
+            title, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 30, TEXT_PRIMARY, 16,
             anchor_x="center",
         )
 
@@ -210,32 +223,32 @@ class ReplayWindow(arcade.Window):
 
         readout = f"Tyre: {tyre}   Track: {track}   Air: {air_temp}   Track Temp: {track_temp}"
         arcade.draw_text(
-            readout, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 50, arcade.color.LIGHT_GRAY, 12,
+            readout, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 50, TEXT_SECONDARY, 12,
             anchor_x="center",
         )
 
     @staticmethod
     def _draw_dial(center, value, value_min, value_max, label, unit):
         cx, cy = center
-        arcade.draw_circle_outline(cx, cy, GAUGE_RADIUS, arcade.color.WHITE, border_width=3)
+        arcade.draw_circle_outline(cx, cy, GAUGE_RADIUS, BORDER_STRONG, border_width=3)
         needle_x, needle_y = gauge_needle_point(center, GAUGE_RADIUS - 10, value, value_min, value_max)
-        arcade.draw_line(cx, cy, needle_x, needle_y, arcade.color.RED, line_width=3)
-        arcade.draw_circle_filled(cx, cy, 5, arcade.color.WHITE)
+        arcade.draw_line(cx, cy, needle_x, needle_y, ACCENT, line_width=3)
+        arcade.draw_circle_filled(cx, cy, 5, TEXT_PRIMARY)
         arcade.draw_text(
-            f"{value:.0f}{unit}", cx, cy - GAUGE_RADIUS - 22, arcade.color.WHITE, 14, anchor_x="center"
+            f"{value:.0f}{unit}", cx, cy - GAUGE_RADIUS - 22, TEXT_PRIMARY, 14, anchor_x="center"
         )
         arcade.draw_text(
-            label, cx, cy + GAUGE_RADIUS + 6, arcade.color.LIGHT_GRAY, 12, anchor_x="center"
+            label, cx, cy + GAUGE_RADIUS + 6, TEXT_SECONDARY, 12, anchor_x="center"
         )
 
     @staticmethod
     def _draw_brake_lamp(center, is_braking: bool):
         cx, cy = center
-        lamp_color = arcade.color.RED if is_braking else (60, 60, 60)
+        lamp_color = CRITICAL if is_braking else SURFACE_3
         arcade.draw_circle_filled(cx, cy, BRAKE_LAMP_RADIUS, lamp_color)
-        arcade.draw_circle_outline(cx, cy, BRAKE_LAMP_RADIUS, arcade.color.WHITE, border_width=2)
+        arcade.draw_circle_outline(cx, cy, BRAKE_LAMP_RADIUS, BORDER_STRONG, border_width=2)
         arcade.draw_text(
-            "BRAKE", cx, cy - BRAKE_LAMP_RADIUS - 22, arcade.color.WHITE, 12, anchor_x="center"
+            "BRAKE", cx, cy - BRAKE_LAMP_RADIUS - 22, TEXT_PRIMARY, 12, anchor_x="center"
         )
 
     @staticmethod
@@ -244,13 +257,13 @@ class ReplayWindow(arcade.Window):
         arcade.draw_lrbt_rectangle_outline(
             cx - GEAR_BOX_HALF_SIZE, cx + GEAR_BOX_HALF_SIZE,
             cy - GEAR_BOX_HALF_SIZE, cy + GEAR_BOX_HALF_SIZE,
-            arcade.color.WHITE, border_width=3,
+            BORDER_STRONG, border_width=3,
         )
         arcade.draw_text(
-            str(gear), cx, cy, arcade.color.WHITE, 30, anchor_x="center", anchor_y="center"
+            str(gear), cx, cy, TEXT_PRIMARY, 30, anchor_x="center", anchor_y="center"
         )
         arcade.draw_text(
-            "GEAR", cx, cy - GEAR_BOX_HALF_SIZE - 22, arcade.color.LIGHT_GRAY, 12, anchor_x="center"
+            "GEAR", cx, cy - GEAR_BOX_HALF_SIZE - 22, TEXT_SECONDARY, 12, anchor_x="center"
         )
 
 
