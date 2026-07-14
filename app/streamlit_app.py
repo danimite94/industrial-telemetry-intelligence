@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import plotly.graph_objects as go
+import plotly.io as pio
 
 from src import config
 from components.asset_card import asset_card_html
@@ -117,6 +118,22 @@ _CSS_FILE = Path(__file__).parent / "styles" / "dark_theme.css"
 if _CSS_FILE.exists():
     st.markdown(f"<style>{_CSS_FILE.read_text()}</style>", unsafe_allow_html=True)
 
+# Retheme every Plotly figure in the app (Phase 1-10 tabs included) to match
+# the ink/teal control-room palette — a single global template swap, no
+# individual plot function touched.
+_industrial_dark = go.layout.Template(pio.templates["plotly_dark"])
+_industrial_dark.layout.paper_bgcolor = "rgba(0,0,0,0)"
+_industrial_dark.layout.plot_bgcolor = "rgba(0,0,0,0)"
+_industrial_dark.layout.font = dict(family="Sora", color="#DCE3EC")
+_industrial_dark.layout.colorway = [
+    "#2DD4C8", "#F2A93E", "#F0473C", "#3ECF8E", "#6FF0E6", "#9AA4B5", "#C77DFF", "#5EEAE0",
+]
+_industrial_dark.layout.xaxis = dict(gridcolor="#212630", zerolinecolor="#2A3039", linecolor="#2A3039")
+_industrial_dark.layout.yaxis = dict(gridcolor="#212630", zerolinecolor="#2A3039", linecolor="#2A3039")
+_industrial_dark.layout.legend = dict(bgcolor="rgba(0,0,0,0)")
+pio.templates["industrial_dark"] = _industrial_dark
+pio.templates.default = "industrial_dark"
+
 st.title("Industrial Asset Monitoring and Decision Support System")
 st.caption("Demonstrated on Formula 1 telemetry as a public surrogate for industrial sensor data")
 
@@ -133,19 +150,19 @@ def _data_missing() -> list[Path]:
 
 def _style_health(val: str) -> str:
     if val == HEALTH_CRITICAL:
-        return "background-color: #8b1a1a; color: white; font-weight: bold"
+        return "background-color: #3D1512; color: #F0473C; font-weight: 600"
     if val == HEALTH_WARNING:
-        return "background-color: #7a5200; color: white; font-weight: bold"
+        return "background-color: #3D2C0F; color: #F2A93E; font-weight: 600"
     if val == HEALTH_HEALTHY:
-        return "background-color: #1a5c1a; color: white; font-weight: bold"
+        return "background-color: #10321F; color: #3ECF8E; font-weight: 600"
     return ""
 
 
 def _style_severity(val: str) -> str:
     if val == SEVERITY_CRITICAL:
-        return "background-color: #8b1a1a; color: white"
+        return "background-color: #3D1512; color: #F0473C"
     if val == SEVERITY_WARNING:
-        return "background-color: #7a5200; color: white"
+        return "background-color: #3D2C0F; color: #F2A93E"
     return ""
 
 
@@ -163,7 +180,7 @@ def _fleet_risk_distribution(risk_df: pd.DataFrame) -> go.Figure:
     which reflects *current* anomaly/recommendation state. This answers
     "where is the fleet heading", not "what does it look like right now"."""
     order = ["Low", "Medium", "High"]
-    colors = {"Low": "#22C55E", "Medium": "#F59E0B", "High": "#EF4444"}
+    colors = {"Low": "#3ECF8E", "Medium": "#F2A93E", "High": "#F0473C"}
     if risk_df.empty:
         counts = pd.Series([0, 0, 0], index=order)
     else:
@@ -172,13 +189,14 @@ def _fleet_risk_distribution(risk_df: pd.DataFrame) -> go.Figure:
         x=counts.values, y=order, orientation="h",
         marker=dict(color=[colors[c] for c in order]),
         text=counts.values, textposition="outside",
-        textfont=dict(color="#F8FAFC"),
+        textfont=dict(color="#F1F4F8", family="JetBrains Mono"),
     ))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=0, r=30, t=10, b=20), height=220,
-        xaxis=dict(showgrid=False, color="#94A3B8", title="Stints"),
-        yaxis=dict(showgrid=False, color="#F8FAFC", autorange="reversed"),
+        font=dict(family="Sora"),
+        xaxis=dict(showgrid=False, color="#98A4B5", title="Stints"),
+        yaxis=dict(showgrid=False, color="#F1F4F8", autorange="reversed"),
         showlegend=False,
     )
     return fig
@@ -285,7 +303,7 @@ def _driver_header_html(dhr: pd.Series, current_stint_rec: pd.DataFrame | None =
 </div>"""
 
 
-_RISK_COLOR = {"High": "#EF4444", "Medium": "#F59E0B", "Low": "#22C55E"}
+_RISK_COLOR = {"High": "#F0473C", "Medium": "#F2A93E", "Low": "#3ECF8E"}
 _REC_ICON = {"Pit now": "🔴", "Pit within": "🟠", "Monitor": "🟠", "No action": "🟢"}
 _CONFIDENCE_CLASS = {"High": "conf-high", "Medium": "conf-medium", "Low": "conf-low"}
 
@@ -313,7 +331,7 @@ def _evidence_row_html(label: str, value: str) -> str:
     )
 
 
-def _decision_card_html(row: pd.Series, fits_df: pd.DataFrame, last_anomaly: pd.Series | None) -> str:
+def _decision_card_html(row: pd.Series, fits_df: pd.DataFrame, last_anomaly: pd.Series | None, index: int = 0) -> str:
     """One stint's recommendation as a full decision card: action, evidence,
     remaining useful life, confidence, root cause, and source phase — never
     just a bare action label. Every field is read from data already computed
@@ -371,7 +389,7 @@ def _decision_card_html(row: pd.Series, fits_df: pd.DataFrame, last_anomaly: pd.
         confidence_html = ""
         source = "Phase 5 (forecast) → Phase 7 (threshold)"
 
-    return f"""<div class="rec-card">
+    return f"""<div class="rec-card" style="--i:{index}">
   <div class="rec-header">
     <span class="rec-icon">{icon}</span>
     <span class="rec-action">{action}</span>
@@ -417,7 +435,7 @@ def _anomaly_only_card_html(dhr: pd.Series, last_anomaly: pd.Series) -> str:
 
 def _recommendations_html(recs_df: pd.DataFrame, fits_df: pd.DataFrame, anomalies_df: pd.DataFrame, driver: str) -> str:
     last_anomaly = _last_anomaly_for(anomalies_df, driver)
-    cards = [_decision_card_html(row, fits_df, last_anomaly) for _, row in recs_df.iterrows()]
+    cards = [_decision_card_html(row, fits_df, last_anomaly, i) for i, (_, row) in enumerate(recs_df.iterrows())]
     return '<div class="rec-list">' + "".join(cards) + "</div>"
 
 
@@ -497,7 +515,7 @@ with overview_tab:
             top5 = ov_health_ranked.head(5)
             st.markdown(
                 '<div class="asset-grid">'
-                + "".join(asset_card_html(row) for _, row in top5.iterrows())
+                + "".join(asset_card_html(row, i) for i, (_, row) in enumerate(top5.iterrows()))
                 + "</div>",
                 unsafe_allow_html=True,
             )
@@ -546,7 +564,7 @@ with overview_tab:
         else:
             st.markdown(
                 '<div class="asset-grid">'
-                + "".join(asset_card_html(row) for _, row in sorted_health.iterrows())
+                + "".join(asset_card_html(row, i) for i, (_, row) in enumerate(sorted_health.iterrows()))
                 + "</div>",
                 unsafe_allow_html=True,
             )
@@ -668,7 +686,7 @@ with driver_tab:
                     .dropna().reset_index(drop=True)
                 )
                 if not lap_times_series.empty:
-                    st.plotly_chart(sparkline_figure(lap_times_series, "#3B82F6"),
+                    st.plotly_chart(sparkline_figure(lap_times_series, "#2DD4C8"),
                                    use_container_width=True)
             with chart_col:
                 st.plotly_chart(plot_lap_times(driver_laps), use_container_width=True)
@@ -682,7 +700,7 @@ with driver_tab:
                     .dropna().reset_index(drop=True)
                 )
                 if not tyre_life_series.empty:
-                    st.plotly_chart(sparkline_figure(tyre_life_series, "#F59E0B"),
+                    st.plotly_chart(sparkline_figure(tyre_life_series, "#F2A93E"),
                                    use_container_width=True)
             with chart_col2:
                 st.plotly_chart(plot_tyre_life_vs_laptime(driver_laps), use_container_width=True)

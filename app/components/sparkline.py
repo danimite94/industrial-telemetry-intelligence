@@ -10,7 +10,7 @@ def _hex_to_rgb(hex_color: str) -> str:
     return f"{r},{g},{b}"
 
 
-def sparkline_figure(values: pd.Series, color: str = "#3B82F6") -> go.Figure:
+def sparkline_figure(values: pd.Series, color: str = "#2DD4C8") -> go.Figure:
     rgb = _hex_to_rgb(color)
     fig = go.Figure(go.Scatter(
         x=list(range(len(values))),

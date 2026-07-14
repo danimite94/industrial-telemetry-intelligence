@@ -28,7 +28,7 @@ def _fmt(val, suffix: str = "") -> str:
     return f"{val}{suffix}"
 
 
-def asset_card_html(row: pd.Series) -> str:
+def asset_card_html(row: pd.Series, index: int = 0) -> str:
     status   = row.get("HealthStatus", "Healthy")
     card_cls = _CARD_CLASS.get(status, "healthy")
     badge    = health_badge_html(status)
@@ -40,7 +40,7 @@ def asset_card_html(row: pd.Series) -> str:
     risk     = row.get("RiskCategory") or "—"
     rec      = row.get("ActiveRecommendation") or "—"
 
-    return f"""<div class="asset-card {card_cls}">
+    return f"""<div class="asset-card {card_cls}" style="--i:{index}">
   <div class="asset-card-header">
     <span class="asset-driver-code">{driver}</span>
     {badge}

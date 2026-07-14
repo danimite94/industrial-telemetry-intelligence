@@ -84,7 +84,7 @@ def _safe_str(val) -> str:
     return "" if s.lower() == "none" else s
 
 
-def _single_event_html(row: pd.Series) -> str:
+def _single_event_html(row: pd.Series, index: int = 0) -> str:
     severity = _safe_str(row.get("Severity")) or "Info"
     dot_cls  = _SEVERITY_DOT.get(severity, "info")
     icon     = _SEVERITY_ICON.get(severity, "🔵")
@@ -99,7 +99,7 @@ def _single_event_html(row: pd.Series) -> str:
     action_html = f'<div class="timeline-action">→ {action}</div>' if action else ""
 
     return (
-        f'<div class="timeline-event {dot_cls}">'
+        f'<div class="timeline-event {dot_cls}" style="--i:{index}">'
         f'<div class="timeline-time">{time_str} · {etype}</div>'
         f'<div class="timeline-desc">{icon} {driver_pfx}{desc}</div>'
         f'{action_html}'
@@ -107,9 +107,9 @@ def _single_event_html(row: pd.Series) -> str:
     )
 
 
-def _cluster_html(rows: list[pd.Series]) -> str:
+def _cluster_html(rows: list[pd.Series], index: int = 0) -> str:
     if len(rows) == 1:
-        return _single_event_html(rows[0])
+        return _single_event_html(rows[0], index)
 
     head = rows[0]
     severity = _safe_str(head.get("Severity")) or "Info"
@@ -124,7 +124,7 @@ def _cluster_html(rows: list[pd.Series]) -> str:
     detail_items = "".join(_single_event_html(r) for r in rows)
 
     return (
-        f'<details class="timeline-cluster">'
+        f'<details class="timeline-cluster" style="--i:{index}">'
         f'<summary class="timeline-event {dot_cls}">'
         f'<div class="timeline-time">{time_str} · {etype} · {len(rows)}× clustered</div>'
         f'<div class="timeline-desc">{icon} {driver_pfx}{len(rows)}× {desc} '
@@ -137,9 +137,9 @@ def _cluster_html(rows: list[pd.Series]) -> str:
 
 def event_timeline_html(events: pd.DataFrame, max_events: int = 15) -> str:
     if events.empty:
-        return '<div class="timeline"><p style="color:#94A3B8;font-size:0.78rem;">No events.</p></div>'
+        return '<div class="timeline"><p style="color:var(--text-secondary);font-size:0.78rem;">No events.</p></div>'
 
     clusters = _cluster_events(events)[:max_events]
-    items = [_cluster_html(rows) for rows in clusters]
+    items = [_cluster_html(rows, i) for i, rows in enumerate(clusters)]
 
     return '<div class="timeline">' + "".join(items) + "</div>"
