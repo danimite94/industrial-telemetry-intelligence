@@ -455,3 +455,5 @@ mid-lap yellow that clears before the lap ends shows as Green.
 since it only re-scores their outputs. It's currently validated on one real race where every
 anomaly happened to be explained - the "Unexplained" escalation path has only been proven with
 synthetic data, not yet with a real unexplained anomaly.
+
+I did some changes
